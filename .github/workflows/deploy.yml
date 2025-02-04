@@ -1,8 +1,9 @@
-#--------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 # Workflow configuration
-#--------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 
 name: Deploy
+
 on:
   push:               # Run on push
     paths-ignore:     # File patterns to ignore
@@ -12,311 +13,312 @@ on:
     paths-ignore:     # File-patterns to ignore
     - '**.md'         # Ignore changes to *.md files
 
-#--------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 # Define application name & version
-#--------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 
 env:
-  VERSION: "1.1.5"
-  EXECUTABLE: "SerialStudio"
+  VERSION: "3.0.6"
+  QT_VERSION_LINUX: 6.8.1
+  QT_VERSION_MACOS: 6.8.1
+  QT_VERSION_WINDOWS: 6.8.1
+  EXECUTABLE: "Serial-Studio"
   APPLICATION: "Serial Studio"
   UNIXNAME: "serial-studio"
-  QMAKE_PROJECT: "Serial-Studio.pro"
-  QML_DIR_NIX: "assets/qml"
-  QML_DIR_WIN: "assets\\qml"
+  QML_DIR: "../../app/qml"
   PUBLISHER: "Alex Spataru"
-  REPO_DIR: "/home/runner/work/Serial-Studio/Serial-Studio"
-  QT_VERSION: 5.15.2
-  QMAKE: qmake
-  CORES: 12
-
-#--------------------------------------------------------------------------------
+  DESCRIPTION: "Multi-purpose serial data visualization & processing program"
+  QT_MODULES: qt3d qtgraphs qtquick3d qtlocation qtdatavis3d qtserialport qtshadertools qtpositioning qtconnectivity
+    
+#-------------------------------------------------------------------------------
 # Workflow jobs (GNU/Linux, macOS & Windows)
-#--------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-18.04
-    name: '🐧 Ubuntu 18.04'
+  #
+  # Linux build
+  #
+  build-linux-x86_64:
+    runs-on: ubuntu-22.04
+    name: '🐧 Linux (x86_64)'
     steps:
-
     - name: '🧰 Checkout'
-      uses: actions/checkout@v2
-      with:
-        submodules: recursive
-
-    - name: '⚙️ Cache Qt'
-      id: cache-qt
-      uses: actions/cache@v1
-      with:
-        path: ../Qt
-        key: ${{runner.os}}-qtcachedir-${{env.QT_VERSION}}
-
+      uses: actions/checkout@v4
+      
     - name: '⚙️ Install Qt'
-      uses: jurplel/install-qt-action@v2
+      uses: jurplel/install-qt-action@v4
       with:
-        version: ${{env.QT_VERSION}}
-        #modules: qtserialport qt5compat
-        aqtversion: '==2.0.0'
-        cached: ${{steps.cache-qt.outputs.cache-hit}}
+        version: ${{env.QT_VERSION_LINUX}}
+        modules: ${{env.QT_MODULES}}
+        cache: true
+        install-deps: 'true'
 
-    # Install additional dependencies, stolen from:
-    # https://github.com/mapeditor/tiled/blob/master/.github/workflows/packages.yml
     - name: '⚙️ Install dependencies'
       run: |
         sudo apt-get update
-        sudo apt-get install libgl1-mesa-dev libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libzstd-dev
+        sudo apt-get install -y \
+        libcups2-dev \
+        libgl1-mesa-dev \
+        libxkbcommon-x11-0 \
+        libxcb-icccm4 \
+        libxcb-image0 \
+        libxcb-keysyms1 \
+        libxcb-render-util0 \
+        libxcb-xinerama0 \
+        libzstd-dev \
+        libxcb-image0-dev \
+        libxcb-util0-dev \
+        libxcb-cursor-dev \
+        libssl-dev \
+        libudev-dev \
+        rpm \
+        libfuse2 \
+        fakeroot
+        
+    - name: '⚙️ Install CMake'
+      uses: lukka/get-cmake@latest
+      with:
+        useLocalCache: true
 
-    - name: '🚧 Compile application'
-      run: |
-          ${{env.QMAKE}} ${{env.QMAKE_PROJECT}} CONFIG+=release PREFIX=/usr
-          make -j${{env.CORES}}
+    - name: '⚙️ Install Intel Compiler'
+      uses: fortran-lang/setup-fortran@v1
+      with:
+        compiler: intel
+        version: 2024.1
 
-    - name: '⚙️ Install linuxdeployqt'
+    - name: '🚧 Configure with CMake'
       run: |
-          wget -c -nv "https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage" -O linuxdeployqt
-          chmod a+x linuxdeployqt
+        mkdir build
+        cd build
+        cmake ../ -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx -DPRODUCTION_OPTIMIZATION=ON -DCMAKE_BUILD_TYPE=Release
+
+    - name: '🚧 Build application'
+      run: |
+        cd build
+        cmake --build . --config Release -j 16
 
     - name: '📦 Create AppImage'
       run: |
-          make INSTALL_ROOT=appdir install
-          ./linuxdeployqt appdir/usr/share/applications/*.desktop -appimage -bundle-non-qt-libs -extra-plugins=imageformats/libqsvg.so -qmldir="${{env.QML_DIR_NIX}}"
-          # Rename AppImage to match "%AppName%-%Version%-Linux.AppImage" format
-          mv Serial_Studio-${{env.VERSION}}-x86_64.AppImage ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux.AppImage
+        cd "build/app"
+        wget https://github.com/dantti/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        wget https://github.com/dantti/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+        chmod +x linuxdeploy-x86_64.AppImage
+        chmod +x linuxdeploy-plugin-qt-x86_64.AppImage
+        
+        export QML_SOURCES_PATHS="${{env.QML_DIR}}"
+        export QMAKE=/home/runner/work/${{env.EXECUTABLE}}/Qt/${{env.QT_VERSION_LINUX}}/gcc_64/bin/qmake
+        export PATH=/home/runner/work/${{env.EXECUTABLE}}/Qt/${{env.QT_VERSION_LINUX}}/gcc_64/libexec:$PATH
+        
+        ./linuxdeploy-x86_64.AppImage --appdir AppDir -e ${{env.UNIXNAME}} -i ../../app/deploy/linux/${{env.UNIXNAME}}.svg -d ../../app/deploy/linux/${{env.UNIXNAME}}.desktop --plugin qt --output appimage
+        
+        rm linuxdeploy-x86_64.AppImage
+        rm linuxdeploy-plugin-qt-x86_64.AppImage
+        
+        mv *.AppImage ../../${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.AppImage
+
+    - name: '📦 Create Native Packages'
+      run: |
+        cd "build/app"
+
+        export LDNP_DESCRIPTION="${{env.DESCRIPTION}}"
+        wget https://github.com/linuxdeploy/linuxdeploy-plugin-native_packages/releases/download/continuous/linuxdeploy-plugin-native_packages-x86_64.AppImage
+        chmod +x linuxdeploy-plugin-native_packages-x86_64.AppImage
+        
+        fakeroot ./linuxdeploy-plugin-native_packages-x86_64.AppImage --appdir AppDir --build deb
+        fakeroot ./linuxdeploy-plugin-native_packages-x86_64.AppImage --appdir AppDir --build rpm
+        
+        rm -rf AppDir
+        rm linuxdeploy-plugin-native_packages-x86_64.AppImage
+        
+        mv *.deb ../../${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.deb
+        mv *.rpm ../../${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.rpm
           
     - name: '📤 Upload artifact: AppImage'
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
-        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux.AppImage
-        path: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux.AppImage
+        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.AppImage
+        path: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.AppImage
 
+    - name: '📤 Upload artifact: Debian Package'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.deb
+        path: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.deb
+
+    - name: '📤 Upload artifact: RPM Package'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.rpm
+        path: ${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.rpm
+
+  #
   # macOS build
-  build-mac:
+  #
+  build-mac-universal:
     runs-on: macos-latest
-    name: '🍎 macOS'
+    name: '🍎 macOS (Universal)'
     steps:
-
     - name: '🧰 Checkout'
-      uses: actions/checkout@v2
-      with:
-        submodules: recursive
-
-    - name: '⚙️ Cache Qt'
-      id: cache-qt
-      uses: actions/cache@v1
-      with:
-        path: ../Qt
-        key: ${{runner.os}}-qtcachedir-${{env.QT_VERSION}}
+      uses: actions/checkout@v4
 
     - name: '⚙️ Install Qt'
-      uses: jurplel/install-qt-action@v2
+      uses: jurplel/install-qt-action@v4
       with:
-        version: ${{env.QT_VERSION}}
-        #modules: qtserialport qt5compat
-        aqtversion: '==2.0.0'
-        cached: ${{steps.cache-qt.outputs.cache-hit}}
+        version: ${{env.QT_VERSION_MACOS}}
+        modules: ${{env.QT_MODULES}}
+        arch: clang_64
+        cache: 'true'
 
-    - name: '🚧 Compile application'
-      run: |
-           ${{env.QMAKE}} ${{env.QMAKE_PROJECT}} CONFIG+=release PREFIX=/usr
-           make -j${{env.CORES}}
-
-    - name: '📦 Package application (macdeployqt and zipfile)'
-      run: |
-        macdeployqt ${{env.EXECUTABLE}}.app -qmldir="${{env.QML_DIR_NIX}}"
-        mv "${{env.EXECUTABLE}}.app" "${{env.APPLICATION}}.app"
-
-        # ZIP application "%AppName%-%Version%-macOS.zip"
-        # We use ditto instead of zip to use the same commands as Finder
-        ditto -c -k --sequesterRsrc --keepParent "${{env.APPLICATION}}.app" ${{env.EXECUTABLE}}-${{env.VERSION}}-macOS.zip
-
-    - name: '📤 Upload artifact: ZIP'
-      uses: actions/upload-artifact@v2
+    - name: '⚙️ Install CMake'
+      uses: lukka/get-cmake@latest
       with:
-        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-macOS.zip
-        path: ${{env.EXECUTABLE}}-${{env.VERSION}}-macOS.zip
+        useLocalCache: true
 
+    - name: '⚙️ Install Node'
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: '🚧 Configure with CMake'
+      run: |
+        mkdir build
+        cd build
+        cmake ../ -DPRODUCTION_OPTIMIZATION=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+    - name: '🚧 Build application'
+      run: |
+        cd build
+        cmake --build . --config Release -j 16
+
+    - name: '📦 Package application'
+      run: |
+        cd build
+        cpack --verbose
+
+    - name: '🪪 Import Certificates'
+      uses: alex-spataru/import-codesign-certs@v4
+      with:
+        p12-file-base64: ${{secrets.APPLE_CERTIFICATES_P12}}
+        p12-password: ${{secrets.APPLE_CERTIFICATES_P12_PASSWORD}}
+
+    - name: '💿 Mount DMG and copy application'
+      run: |
+        VOLUME=$(yes | hdiutil attach ./build/*.dmg -nobrowse | grep "Volumes" | awk '{print $3}')
+        cp -a "$VOLUME/${{env.EXECUTABLE}}.app" "${{env.APPLICATION}}.app"
+        hdiutil detach "$VOLUME"
+
+    - name: '✍🏻 Sign Application'
+      run: codesign --force --deep --options runtime --sign "${{secrets.APPLE_APPID_TEAM_ID}}" "${{env.APPLICATION}}.app"
+        
+    - name: '💽 Create nice DMG'
+      run: |
+        npm install --global create-dmg
+        rm LICENSE.md
+        create-dmg "${{env.APPLICATION}}.app" --dmg-title="${{env.APPLICATION}}"
+        mv "${{env.APPLICATION}} ${{env.VERSION}}.dmg" "${{env.EXECUTABLE}}-${{env.VERSION}}-macOS-Universal.dmg"
+
+    - name: '📋 Notarize'
+      uses: wpilibsuite/xcode-notarize@v3
+      with:
+        product-path: ${{env.EXECUTABLE}}-${{env.VERSION}}-macOS-Universal.dmg
+        appstore-connect-username: ${{secrets.APPLE_NOTARIZATION_USERNAME}}
+        appstore-connect-teamid: ${{secrets.APPLE_NOTARIZATION_TEAMID}}
+        appstore-connect-password: ${{secrets.APPLE_NOTARIZATION_PASSWORD}}
+
+    - name: '📌 Staple'
+      uses: BoundfoxStudios/action-xcode-staple@v1
+      with:
+        product-path: ${{env.EXECUTABLE}}-${{env.VERSION}}-macOS-Universal.dmg
+
+    - name: '📤 Upload artifact: DMG'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-macOS-Universal.dmg
+        path: ${{env.EXECUTABLE}}-${{env.VERSION}}-macOS-Universal.dmg
+
+  #
   # Windows build
-  build-windows:
+  #
+  build-windows-x86_64:
     runs-on: windows-latest
-    name: '🧊 Windows'
+    name: '🧊 Windows (x86_64)'
     steps:
-
+    - run: git config --global core.autocrlf input
     - name: '🧰 Checkout'
-      uses: actions/checkout@v2
-      with:
-        submodules: recursive
+      uses: actions/checkout@v4
 
-    - name: '⚙️ Configure MSVC'
-      uses: ilammy/msvc-dev-cmd@v1
+    - name: '⚙️ Install Qt'
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{env.QT_VERSION_WINDOWS}}
+        modules: ${{env.QT_MODULES}}
+        cache: 'true'
+        arch: win64_msvc2022_64
+      
+    - name: '⚙️ Install CMake'
+      uses: lukka/get-cmake@latest
+      with:
+        useLocalCache: true
+
+    - name: '🛠 Setup MSVC Development Environment'
+      uses: TheMrMilchmann/setup-msvc-dev@v3
       with:
         arch: x64
-        spectre: true
-
-    - name: '⚙️ Cache Qt'
-      id: cache-qt
-      uses: actions/cache@v1
-      with:
-        path: ../Qt
-        key: ${{runner.os}}-qtcachedir-${{env.QT_VERSION}}
-
-    - name: '⚙️ Install Qt'
-      uses: jurplel/install-qt-action@v2
-      with:
-        version: ${{env.QT_VERSION}}
-        #modules: qtserialport qt5compat
-        aqtversion: '==2.0.0'
-        cached: ${{steps.cache-qt.outputs.cache-hit}}
-
-    - name: '⚙️ Install NSIS'
+        
+    - name: '🚧 Configure with CMake'
       run: |
-        Invoke-Expression (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh')
-        scoop bucket add extras
-        scoop install nsis
+        mkdir build
+        cd build
+        cmake ../ -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DPRODUCTION_OPTIMIZATION=ON -DCMAKE_BUILD_TYPE=Release
 
-    - name: '🚧 Compile application'
+    - name: '🚧 Build application'
       run: |
-        ${{env.QMAKE}} ${{env.QMAKE_PROJECT}} CONFIG+=release PREFIX=/usr
-        nmake
-
-    # Copy Qt DLLs, compiler runtime & application icon
-    - name: '📦 Package application (windeployqt)'
+        cd build
+        cmake --build . --config Release -j 16
+        
+    - name: '⚙️ Add msbuild to PATH'
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: '⚙️ Install WiX'
+      run: dotnet tool install --global wix
+        
+    - name: '📦 Package application'
       run: |
-        mkdir bin
-        move release/${{env.EXECUTABLE}}.exe bin
-        windeployqt bin/${{env.EXECUTABLE}}.exe -qmldir="${{env.QML_DIR_WIN}}" --compiler-runtime
-        mkdir "${{env.APPLICATION}}"
-        move bin "${{env.APPLICATION}}"
-        xcopy deploy\windows\resources\icon.ico "${{env.APPLICATION}}"
-        xcopy deploy\windows\openssl\*.dll "${{env.APPLICATION}}\bin"
-
-    - name: '📦 Make NSIS installer'
-      run: |
-        move "${{env.APPLICATION}}" deploy\windows\nsis\
-        cd deploy\windows\nsis
-        makensis /X"SetCompressor /FINAL lzma" setup.nsi
-        ren *.exe ${{env.EXECUTABLE}}-${{env.VERSION}}-Windows.exe
-
-    - name: '📤 Upload artifact: NSIS installer'
-      uses: actions/upload-artifact@v2
+        cd build
+        cpack --verbose
+        mv *.msi ${{env.EXECUTABLE}}-${{env.VERSION}}-Windows-x86_64.msi
+        mv ${{env.EXECUTABLE}}-${{env.VERSION}}-Windows-x86_64.msi ../
+        
+    - name: '📤 Upload artifact: MSI installer'
+      uses: actions/upload-artifact@v4
       with:
-        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-Windows.exe
-        path: deploy/windows/nsis/${{env.EXECUTABLE}}-${{env.VERSION}}-Windows.exe
+        name: ${{env.EXECUTABLE}}-${{env.VERSION}}-Windows-x86_64.msi
+        path: ${{env.EXECUTABLE}}-${{env.VERSION}}-Windows-x86_64.msi
 
-  # Windows MSYS2 build
-  msys2-makepkg:
-    if: ${{false}}
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { icon: '🟪', msystem: MINGW64, arch: x86_64 }
-          - { icon: '🟦', msystem: MINGW32, arch: i686   }
-    name:  ${{ matrix.icon }} ${{ matrix.msystem }} | ${{ matrix.arch }} | makepkg
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-
-    - run: git config --global core.autocrlf input
-      shell: bash
-
-    - name: '🧰 Checkout'
-      uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
-        submodules: recursive
-
-    - name: '${{ matrix.icon }} Setup MSYS2'
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: ${{ matrix.msystem }}
-        update: true
-        install: >
-          base-devel
-          mingw-w64-${{ matrix.arch }}-toolchain
-
-    - name: '🚧 Build'
-      run: |
-        cd msys2
-        tries=0
-        # Try building three times due to the arbitrary 'Bad address' error
-        while [ $tries -lt 3 ]; do
-          makepkg-mingw --noconfirm --noprogressbar -sCLf && break || tries=$((tries+1))
-        done
-
-      env:
-        MINGW_INSTALLS: ${{ matrix.msystem }}
-
-    - name: '📤 Upload artifact: MSYS2 ${{ matrix.arch }} package'
-      uses: actions/upload-artifact@v2
-      with:
-        name: msys2-pkgs
-        path: msys2/*.zst
-
-  # Test Windows MSYS2 packages
-  msys2-test:
-    if: ${{false}}
-    needs: msys2-makepkg
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { icon: '🟪', msystem: MINGW64, arch: x86_64 }
-          - { icon: '🟦', msystem: MINGW32, arch: i686   }
-    name: ${{ matrix.icon }} ${{ matrix.msystem }} | ${{ matrix.arch }} | Test
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-
-    - name: '${{ matrix.icon }} Setup MSYS2'
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: ${{ matrix.msystem }}
-        update: true
-        install: >
-          tree
-          tar
-          zstd
-
-    - name: '📥 Download artifacts: MSYS2 packages'
-      uses: actions/download-artifact@v2
-      with:
-        name: msys2-pkgs
-
-    - name: 'Install MSYS2 package'
-      run: |
-        pacman -U --noconfirm --noprogressbar *${{ matrix.arch }}*.zst
-
-    - name: 'List contents of package'
-      run: |
-        mkdir tmp
-        cd tmp
-        /usr/bin/tar xf ../*${{ matrix.arch }}*.zst
-        tree ${{ matrix.msystem }}
-  
   # Upload continuous build
   upload:
       name: '🗂 Create release and upload artifacts'
       needs:
-        - build-linux
-        - build-mac
-        - build-windows
+        - build-mac-universal
+        - build-windows-x86_64
+        - build-linux-x86_64
       runs-on: ubuntu-latest
       steps:
       - name: '📥 Download artifacts'
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4
       - name: '🗂 Inspect directory after downloading artifacts'
         run: ls -alFR
       - name: '🚀 Create release and upload artifacts'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+            sudo apt-get update
+            sudo apt-get install libfuse2
             wget -q https://github.com/TheAssassin/pyuploadtool/releases/download/continuous/pyuploadtool-x86_64.AppImage
             chmod +x pyuploadtool-x86_64.AppImage
-            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-Linux.AppImage
-            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-macOS.zip
-            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-Windows.exe
+            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.deb
+            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.rpm
+            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-Linux-x86_64.AppImage
+            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-macOS-Universal.dmg
+            ./pyuploadtool-x86_64.AppImage **/${{env.EXECUTABLE}}-${{env.VERSION}}-Windows-x86_64.msi
+
